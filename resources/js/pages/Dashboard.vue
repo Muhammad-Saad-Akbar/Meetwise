@@ -20,5 +20,4 @@ const breadcrumbs: BreadcrumbItem[] = [
             <h4 class="text-xl text-center font-bold">Welcome Saad</h4>
         </div>
     </AppLayout>
-<!--    <h1 class="text-red-500 text-2xl font-bold text-center">Saaad</h1>-->
 </template>

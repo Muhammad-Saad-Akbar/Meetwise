@@ -17,6 +17,11 @@ const mainNavItems: NavItem[] = [
         href: dashboard(),
         icon: LayoutGrid,
     },
+    {
+        title: 'Meetings',
+        href: '/meetings',
+        icon: LayoutGrid,
+    },
 ];
 
 </script>
