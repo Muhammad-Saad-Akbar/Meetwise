@@ -57,11 +57,11 @@ const getJoinTooltip = (meeting) => {
         const meetingTime = new Date(meeting.scheduled_at)
 
         if (now.value < meetingTime) {
-            return 'Meeting has not started yet'
+            return 'You can start this meeting when the scheduled time arrives'
         }
     }
 
-    return 'Click to join meeting'
+    return 'Click to Start meeting';
 };
 
 </script>
