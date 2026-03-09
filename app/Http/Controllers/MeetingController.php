@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Meeting;
 use App\Http\Requests\StoreMeetingRequest;
+use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Inertia\Inertia;
 
@@ -37,5 +38,39 @@ class MeetingController extends Controller
 
         Inertia::flash('message', 'User created successfully!');
         return redirect()->route('meetings.index');
+    }
+
+    public function joinForm()
+    {
+        return Inertia::render('meetings/Join', []);
+    }
+
+    public function join(Request $request)
+    {
+        $request->validate([
+            'meeting_code' => 'required|string',
+        ]);
+
+        $meeting = Meeting::where('meeting_code', $request->meeting_code)->first();
+
+        if (!$meeting) {
+            return back()->withErrors([
+                'meeting_code' => 'Meeting not found.'
+            ]);
+        }
+
+        if ($meeting->status === 'ended') {
+            return back()->withErrors([
+                'meeting_code' => 'This meeting has already ended.'
+            ]);
+        }
+
+        if ($meeting->status === 'upcoming' && $meeting->host_id !== auth()->id()) {
+            return back()->withErrors([
+                'meeting_code' => 'Meeting has not started yet.'
+            ]);
+        }
+
+        return redirect()->route('meetings.room', $meeting->meeting_code);
     }
 }

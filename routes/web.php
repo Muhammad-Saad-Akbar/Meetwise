@@ -19,6 +19,9 @@ Route::middleware(['auth'])->group(function () {
    Route::get('/meetings', [MeetingController::class, 'index'])->name('meetings.index');
    Route::get('/meetings/create', [MeetingController::class, 'create'])->name('meetings.create');
    Route::post('/meetings', [MeetingController::class, 'store'])->name('meetings.store');
+   Route::get('/meetings/join', [MeetingController::class, 'joinForm'])->name('meetings.joinForm');
+   Route::post('/meetings/join', [MeetingController::class, 'join'])->name('meetings.join');
+   Route::get('/meetings/{meeting_code}', [MeetingController::class, 'room'])->name('meetings.room');
 });
 
 require __DIR__.'/settings.php';
