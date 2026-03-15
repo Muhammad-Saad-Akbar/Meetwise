@@ -73,4 +73,10 @@ class MeetingController extends Controller
 
         return redirect()->route('meetings.room', $meeting->meeting_code);
     }
+
+    public function room($meeting_code)
+    {
+        $meeting = Meeting::with('host')->where('meeting_code', $meeting_code)->firstOrFail();
+        return Inertia::render('meetings/Room', compact('meeting'));
+    }
 }
