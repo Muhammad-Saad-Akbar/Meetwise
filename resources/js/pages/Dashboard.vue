@@ -17,7 +17,7 @@ const breadcrumbs: BreadcrumbItem[] = [
 
     <AppLayout :breadcrumbs="breadcrumbs">
         <div class="bg-yellow-500 pt-10 pb-5 mt-14">
-            <h4 class="text-xl text-center font-bold">Welcome Saad</h4>
+            <h4 class="text-xl text-center font-bold">Welcome to Meetwise dashboard</h4>
         </div>
     </AppLayout>
 </template>

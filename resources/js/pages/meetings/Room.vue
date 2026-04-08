@@ -1,7 +1,9 @@
 <script setup>
 import { Head } from '@inertiajs/vue3'
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { usePage } from '@inertiajs/vue3'
+import axios from 'axios'
+import AgoraRTC from "agora-rtc-sdk-ng"
 
 const page = usePage()
 
@@ -9,9 +11,10 @@ const props = defineProps({
     meeting: Object
 })
 
+const client = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" })
 const showChat = ref(false)
 const showParticipants = ref(false)
-const isHost = page.props.auth.user.id === props.meeting.host_id
+const isHost = page.props.auth.user.id === props.meeting.host_id;
 
 const toggleChat = () => {
     showChat.value = !showChat.value
@@ -22,6 +25,25 @@ const toggleParticipants = () => {
     showParticipants.value = !showParticipants.value
     showChat.value = false
 }
+
+onMounted(async () => {
+
+    try {
+
+        const res = await axios.post('/agora/token', {
+            channel: props.meeting.meeting_code
+        })
+
+        const { token, appId, channel, uid } = res.data
+        console.log("Token received:", token)
+
+        await client.join(appId, channel, token, uid)
+        console.log("Joined Agora channel")
+
+    } catch (error) {
+        console.error("Error joining meeting:", error)
+    }
+})
 </script>
 
 <template>

@@ -22,6 +22,7 @@ Route::middleware(['auth'])->group(function () {
    Route::get('/meetings/join', [MeetingController::class, 'joinForm'])->name('meetings.joinForm');
    Route::post('/meetings/join', [MeetingController::class, 'join'])->name('meetings.join');
    Route::get('/meetings/{meeting_code}', [MeetingController::class, 'room'])->name('meetings.room');
+   Route::post('/agora/token', [MeetingController::class, 'generateToken'])->name('agora.token');
 });
 
 require __DIR__.'/settings.php';

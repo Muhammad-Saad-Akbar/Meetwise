@@ -7,6 +7,7 @@ use App\Http\Requests\StoreMeetingRequest;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Inertia\Inertia;
+use App\Services\Agora\RtcTokenBuilder;
 
 class MeetingController extends Controller
 {
@@ -78,5 +79,39 @@ class MeetingController extends Controller
     {
         $meeting = Meeting::with('host')->where('meeting_code', $meeting_code)->firstOrFail();
         return Inertia::render('meetings/Room', compact('meeting'));
+    }
+
+    public function generateToken(Request $request)
+    {
+        $request->validate([
+            'channel' => 'required|string',
+        ]);
+
+        $appId = config('services.agora.app_id');
+        $appCertificate = config('services.agora.certificate');
+
+        $channelName = $request->channel;
+        $uid = auth()->id();
+        $role = RtcTokenBuilder::RolePublisher;
+
+        $expireTimeInSeconds = 3600;
+        $currentTimestamp = now()->timestamp;
+        $privilegeExpiredTs = $currentTimestamp + $expireTimeInSeconds;
+
+        $token = RtcTokenBuilder::buildTokenWithUid(
+            $appId,
+            $appCertificate,
+            $channelName,
+            $uid,
+            $role,
+            $privilegeExpiredTs
+        );
+
+        return response()->json([
+            'token' => $token,
+            'appId' => $appId,
+            'channel' => $channelName,
+            'uid' => $uid,
+        ]);
     }
 }
