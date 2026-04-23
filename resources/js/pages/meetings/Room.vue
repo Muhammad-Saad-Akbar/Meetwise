@@ -11,9 +11,11 @@ const props = defineProps({
     meeting: Object
 })
 
-const client = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" })
-const showChat = ref(false)
-const showParticipants = ref(false)
+const client = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
+const localTracks = ref([]);
+const isScreenSharing = ref(false);
+const showChat = ref(false);
+const showParticipants = ref(false);
 const isHost = page.props.auth.user.id === props.meeting.host_id;
 
 const toggleChat = () => {
@@ -26,24 +28,99 @@ const toggleParticipants = () => {
     showChat.value = false
 }
 
+const stopScreenShare = async () => {
+    try {
+        // Get a fresh native camera stream
+        const cameraStream = await navigator.mediaDevices.getUserMedia({ video: true })
+        const newCameraMediaTrack = cameraStream.getVideoTracks()[0]
+
+        await localTracks.value[1].replaceTrack(newCameraMediaTrack, true)
+        localTracks.value[1].play("local-player")
+
+        document.getElementById("local-player").classList.remove("screen-sharing");
+
+        isScreenSharing.value = false
+    } catch (err) {
+        console.error("Stop screen share error:", err)
+    }
+}
+
+const toggleScreenShare = async () => {
+    if (!isScreenSharing.value) {
+        try {
+            const screenStream = await navigator.mediaDevices.getDisplayMedia({
+                video: true
+            })
+            const screenMediaTrack = screenStream.getVideoTracks()[0]
+
+            await localTracks.value[1].replaceTrack(screenMediaTrack, true)
+            localTracks.value[1].play("local-player")
+
+            document.getElementById("local-player").classList.add("screen-sharing");
+
+            isScreenSharing.value = true
+
+            screenMediaTrack.onended = async () => {
+                await stopScreenShare()
+            }
+        } catch (err) {
+            console.warn("Screen share cancelled or failed:", err)
+            isScreenSharing.value = false
+        }
+    } else {
+        await stopScreenShare()
+    }
+}
+
 onMounted(async () => {
 
     try {
-
         const res = await axios.post('/agora/token', {
             channel: props.meeting.meeting_code
         })
 
         const { token, appId, channel, uid } = res.data
-        console.log("Token received:", token)
 
+        //  Join Agora channel
         await client.join(appId, channel, token, uid)
-        console.log("Joined Agora channel")
+        console.log("Joined Agora")
 
+        //  Create Mic + Camera
+        const tracks = await AgoraRTC.createMicrophoneAndCameraTracks()
+        localTracks.value = tracks
+
+         //  Play Local Video
+        tracks[1].play("local-player")
+
+         //  Publish tracks
+        await client.publish(tracks)
+        console.log("Published local tracks")
+
+         //  Handle remote users
+        client.on("user-published", async (user, mediaType) => {
+
+            await client.subscribe(user, mediaType)
+
+            if (mediaType === "video") {
+                const player = document.createElement("div")
+                player.id = String(user.uid)
+                player.style.width = "300px"
+                player.style.height = "200px"
+
+                document.getElementById("remote-container").appendChild(player)
+
+                user.videoTrack.play(player.id)
+            }
+
+            if (mediaType === "audio") {
+                user.audioTrack.play()
+            }
+        })
     } catch (error) {
-        console.error("Error joining meeting:", error)
+        console.error("Agora Error:", error)
     }
-})
+});
+
 </script>
 
 <template>
@@ -67,12 +144,12 @@ onMounted(async () => {
         <div class="flex flex-1">
 
             <!-- Video Area -->
-            <div class="flex-1 flex items-center justify-center">
-                <div class="bg-black w-4/5 h-4/5 rounded-lg flex items-center justify-center">
-                    <p class="text-gray-500">
-                        Video Grid Area
-                    </p>
-                </div>
+            <div class="flex flex-col items-center justify-center gap-4">
+                <!-- Local Video -->
+                <div id="local-player" class="w-260 h-120 bg-black rounded"></div>
+                <!-- Remote Users -->
+                <div id="remote-container" class="flex gap-4"></div>
+
             </div>
 
             <!-- Sidebar -->
@@ -123,8 +200,8 @@ onMounted(async () => {
                 📷 Camera
             </button>
 
-            <button class="bg-gray-700 px-4 py-2 rounded hover:bg-gray-600">
-                🖥 Share
+            <button @click="toggleScreenShare" class="bg-gray-700 px-4 py-2 rounded hover:bg-gray-600">
+                {{ isScreenSharing ? 'Stop Share' : 'Share Screen' }}
             </button>
 
             <button
@@ -153,5 +230,12 @@ onMounted(async () => {
 
 
 <style scoped>
+/* ✅ :deep() pierces Vue's scoped boundary → targets Agora's injected <video> */
+#local-player :deep(video) {
+    transform: scaleX(-1);
+}
 
+#local-player.screen-sharing :deep(video) {
+    transform: scaleX(1) !important;
+}
 </style>
