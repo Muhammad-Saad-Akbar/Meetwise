@@ -8,6 +8,8 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Inertia\Inertia;
 use App\Services\Agora\RtcTokenBuilder;
+use App\Models\Message;
+use App\Events\MessageSent;
 
 class MeetingController extends Controller
 {
@@ -112,6 +114,47 @@ class MeetingController extends Controller
             'appId' => $appId,
             'channel' => $channelName,
             'uid' => $uid,
+        ]);
+    }
+
+    public function getMessages($meeting_code)
+    {
+        $messages = Message::with('user')
+            ->where('meeting_code', $meeting_code)
+            ->latest()
+            ->take(50)
+            ->get()
+            ->reverse()
+            ->map(fn($m) => [
+                'id'     => $m->id,
+                'body'   => $m->body,
+                'sender' => $m->user->name,
+                'time'   => $m->created_at->format('H:i'),
+                'isSelf' => $m->user_id === auth()->id(),
+            ])
+            ->values();
+
+        return response()->json($messages);
+    }
+
+    public function sendMessage(Request $request, $meeting_code)
+    {
+        $request->validate(['body' => 'required|string|max:1000']);
+
+        $message = Message::create([
+            'user_id'      => auth()->id(),
+            'meeting_code' => $meeting_code,
+            'body'         => $request->body,
+        ]);
+
+        broadcast(new MessageSent($message->load('user')))->toOthers();
+
+        return response()->json([
+            'id'     => $message->id,
+            'body'   => $message->body,
+            'sender' => 'You',
+            'time'   => $message->created_at->format('H:i'),
+            'isSelf' => true,
         ]);
     }
 }
