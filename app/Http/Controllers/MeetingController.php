@@ -157,4 +157,38 @@ class MeetingController extends Controller
             'isSelf' => true,
         ]);
     }
+
+    public function startMeeting($meeting_code)
+    {
+        $meeting = Meeting::where('meeting_code', $meeting_code)->firstOrFail();
+
+        if (auth()->id() !== $meeting->host_id) {
+            return response()->json(['error' => 'Unauthorized'], 403);
+        }
+
+        $meeting->update(['status' => 'live']);
+
+        return response()->json(['status' => 'live']);
+    }
+
+    public function endMeeting($meeting_code)
+    {
+        $meeting = Meeting::where('meeting_code', $meeting_code)->firstOrFail();
+
+        if (auth()->id() !== $meeting->host_id) {
+            return response()->json(['error' => 'Unauthorized'], 403);
+        }
+
+        $meeting->update(['status' => 'ended']);
+
+        return response()->json(['status' => 'ended']);
+    }
+
+    public function checkStatus($meeting_code)
+    {
+        $meeting = Meeting::where('meeting_code', $meeting_code)->firstOrFail();
+
+        return response()->json(['status' => $meeting->status]);
+    }
 }
+

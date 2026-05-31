@@ -105,11 +105,14 @@ const getJoinTooltip = (meeting) => {
                             Code: {{ meeting.meeting_code }}
                         </p>
                         <div :title="getJoinTooltip(meeting)">
-                            <Link :href="route('meetings.room', meeting.meeting_code)">
-                                <Button :disabled="isJoinDisabled(meeting)">
-                                    Start Meeting
-                                </Button>
-                            </Link>
+                            <template v-if="!isJoinDisabled(meeting)">
+                                <Link :href="route('meetings.room', meeting.meeting_code)">
+                                    <Button>Start Meeting</Button>
+                                </Link>
+                            </template>
+                            <template v-else>
+                                <Button disabled>Start Meeting</Button>
+                            </template>
                         </div>
                     </div>
 

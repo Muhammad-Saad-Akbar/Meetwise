@@ -1,5 +1,5 @@
 <script setup>
-import { Head } from '@inertiajs/vue3'
+import {Head, router} from '@inertiajs/vue3'
 import { ref, onMounted, onUnmounted, nextTick } from 'vue'
 import { usePage } from '@inertiajs/vue3'
 import axios from 'axios'
@@ -16,6 +16,9 @@ const props = defineProps({
 const client = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
 const localTracks = ref([]);
 const isScreenSharing = ref(false);
+const isMicMuted = ref(false)
+const isCameraOff = ref(false)
+const statusPollInterval = ref(null)
 
 //  Chat State
 const messages = ref([])
@@ -27,6 +30,7 @@ const isSending = ref(false)
 const showChat = ref(false);
 const showParticipants = ref(false);
 const isHost = page.props.auth.user.id === props.meeting.host_id;
+let savedCameraMediaTrack = null
 
 let echo = null
 
@@ -41,19 +45,104 @@ const toggleParticipants = () => {
     showChat.value = false
 }
 
+// --- Mic Toggle ---
+const toggleMic = async () => {
+    if (!localTracks.value[0]) return
+    await localTracks.value[0].setMuted(!isMicMuted.value)
+    isMicMuted.value = !isMicMuted.value
+}
 
-// Screen Share
+// --- Camera Toggle ---
+const toggleCamera = async () => {
+    if (!localTracks.value[1]) return
+
+    if (isCameraOff.value) {
+        // Turning ON: check if the native track is dead (happens after screen share)
+        const nativeTrack = localTracks.value[1].getMediaStreamTrack()
+        if (!nativeTrack || nativeTrack.readyState === 'ended') {
+            // Native track is dead — get a fresh camera track
+            const stream = await navigator.mediaDevices.getUserMedia({ video: true })
+            const freshTrack = stream.getVideoTracks()[0]
+            await localTracks.value[1].replaceTrack(freshTrack, false)
+        }
+        await localTracks.value[1].setEnabled(true)
+        localTracks.value[1].play("local-player")
+    } else {
+        // Turning OFF
+        await localTracks.value[1].setEnabled(false)
+    }
+
+    isCameraOff.value = !isCameraOff.value
+}
+
+// --- RTC Cleanup (shared by leave and end) ---
+const cleanupRTC = async () => {
+    if (statusPollInterval.value) {
+        clearInterval(statusPollInterval.value)
+    }
+    try {
+        for (const track of localTracks.value) {
+            track.close()
+        }
+        await client.leave()
+    } catch (e) {
+        console.error('RTC cleanup error:', e)
+    }
+}
+
+// --- Leave Meeting (participants) ---
+const leaveRoom = async () => {
+    await cleanupRTC()
+    router.visit(route('meetings.index'))
+}
+
+// --- End Meeting (host only) ---
+const endMeeting = async () => {
+    try {
+        await axios.post(route('meetings.end', props.meeting.meeting_code))
+    } catch (e) {
+        console.error('Failed to end meeting on backend:', e)
+    }
+    await cleanupRTC()
+    router.visit(route('meetings.index'))
+}
+
+// --- Poll status (participants only — detect when host ends meeting) ---
+const startStatusPolling = () => {
+    statusPollInterval.value = setInterval(async () => {
+        try {
+            const res = await axios.get(route('meetings.checkStatus', props.meeting.meeting_code))
+            if (res.data.status === 'ended') {
+                await cleanupRTC()
+                router.visit(route('meetings.index'))
+            }
+        } catch (e) {
+            console.error('Status poll error:', e)
+        }
+    }, 10000)
+}
+
+// Stop Screen Share
 const stopScreenShare = async () => {
     try {
-        // Get a fresh native camera stream
-        const cameraStream = await navigator.mediaDevices.getUserMedia({ video: true })
-        const newCameraMediaTrack = cameraStream.getVideoTracks()[0]
+        const screenTrack = localTracks.value[1].getMediaStreamTrack()
+        screenTrack.stop()
 
-        await localTracks.value[1].replaceTrack(newCameraMediaTrack, true)
-        localTracks.value[1].play("local-player")
+        if (savedCameraMediaTrack) {
+            await localTracks.value[1].replaceTrack(savedCameraMediaTrack, false)
+            savedCameraMediaTrack = null
+        }
 
-        document.getElementById("local-player").classList.remove("screen-sharing");
+        if (isCameraOff.value) {
+            // Camera was OFF → disable and rebind player
+            await localTracks.value[1].setEnabled(false)
+            localTracks.value[1].play("local-player")
+        } else {
+            // Camera was ON → restore and play normally
+            localTracks.value[1].play("local-player")
+        }
 
+        document.getElementById("local-player").classList.remove("screen-sharing")
         isScreenSharing.value = false
     } catch (err) {
         console.error("Stop screen share error:", err)
@@ -63,16 +152,16 @@ const stopScreenShare = async () => {
 const toggleScreenShare = async () => {
     if (!isScreenSharing.value) {
         try {
-            const screenStream = await navigator.mediaDevices.getDisplayMedia({
-                video: true
-            })
+            // Save the current camera track BEFORE replacing it
+            savedCameraMediaTrack = localTracks.value[1].getMediaStreamTrack()
+
+            const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true })
             const screenMediaTrack = screenStream.getVideoTracks()[0]
 
-            await localTracks.value[1].replaceTrack(screenMediaTrack, true)
+            await localTracks.value[1].replaceTrack(screenMediaTrack, false) // false = keep camera track alive in background
             localTracks.value[1].play("local-player")
 
-            document.getElementById("local-player").classList.add("screen-sharing");
-
+            document.getElementById("local-player").classList.add("screen-sharing")
             isScreenSharing.value = true
 
             screenMediaTrack.onended = async () => {
@@ -172,6 +261,20 @@ onMounted(async () => {
         await client.join(appId, channel, token, uid)
         console.log("Joined Agora")
 
+        // Host → mark meeting as live
+        if (isHost) {
+            try {
+                await axios.post(route('meetings.start', props.meeting.meeting_code))
+            } catch (e) {
+                console.error('Failed to mark meeting as live:', e)
+            }
+        }
+
+        // Participant → start polling
+        if (!isHost) {
+            startStatusPolling()
+        }
+
         //  Create Mic + Camera
         const tracks = await AgoraRTC.createMicrophoneAndCameraTracks()
         localTracks.value = tracks
@@ -207,8 +310,21 @@ onMounted(async () => {
     await loadMessages()
 });
 
-onUnmounted(() => {
+onUnmounted(async () => {
+    // Disconnect Laravel Echo (real-time chat)
     echo?.disconnect()
+
+    if (statusPollInterval.value) {
+        clearInterval(statusPollInterval.value)
+    }
+    try {
+        for (const track of localTracks.value) {
+            track.close()
+        }
+        await client.leave()
+    } catch (e) {
+        // Silently fail on unmount
+    }
 })
 </script>
 
@@ -300,8 +416,46 @@ onUnmounted(() => {
 
         <!-- Controls -->
         <div class="p-6 border-t border-gray-700 flex justify-center gap-4">
-            <button class="bg-gray-700 px-4 py-2 rounded hover:bg-gray-600"> 🎤 Mic </button>
-            <button class="bg-gray-700 px-4 py-2 rounded hover:bg-gray-600"> 📷 Camera </button>
+            <!-- Mic Button -->
+            <button
+                @click="toggleMic"
+                :class="isMicMuted ? 'bg-red-600 hover:bg-red-700' : 'bg-gray-700 hover:bg-gray-600'"
+                class="p-3 rounded-full text-white transition"
+                :title="isMicMuted ? 'Unmute' : 'Mute'"
+            >
+                <!-- Mic On -->
+                <svg v-if="!isMicMuted" xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                          d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4M12 3a4 4 0 014 4v4a4 4 0 01-8 0V7a4 4 0 014-4z" />
+                </svg>
+                <!-- Mic Off -->
+                <svg v-else xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                          d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
+                </svg>
+            </button>
+
+            <!-- Camera Button -->
+            <button
+                @click="toggleCamera"
+                :class="isCameraOff ? 'bg-red-600 hover:bg-red-700' : 'bg-gray-700 hover:bg-gray-600'"
+                class="p-3 rounded-full text-white transition"
+                :title="isCameraOff ? 'Turn Camera On' : 'Turn Camera Off'"
+            >
+                <!-- Camera On -->
+                <svg v-if="!isCameraOff" xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                          d="M15 10l4.553-2.069A1 1 0 0121 8.82v6.36a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z" />
+                </svg>
+                <!-- Camera Off -->
+                <svg v-else xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                          d="M15 10l4.553-2.069A1 1 0 0121 8.82v6.36a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 3l18 18" />
+                </svg>
+            </button>
+
             <button @click="toggleScreenShare" class="bg-gray-700 px-4 py-2 rounded hover:bg-gray-600">
                 {{ isScreenSharing ? 'Stop Share' : 'Share Screen' }}
             </button>
@@ -317,8 +471,13 @@ onUnmounted(() => {
                 💬 Chat
             </button>
 
-            <button v-if="isHost" class="bg-red-600 px-4 py-2 rounded hover:bg-red-500">End Meeting</button>
-            <button v-else class="bg-red-600 px-4 py-2 rounded hover:bg-red-500">Leave</button>
+            <!-- Leave / End Meeting Button -->
+            <button @click="isHost ? endMeeting() : leaveRoom()" class="px-4 py-2 rounded-lg text-white font-medium transition"
+                :class="isHost ? 'bg-red-600 hover:bg-red-700' : 'bg-gray-700 hover:bg-gray-600'"
+                :title="isHost ? 'End meeting for everyone' : 'Leave meeting'"
+            >
+                {{ isHost ? 'End Meeting' : 'Leave' }}
+            </button>
         </div>
     </div>
 </template>
