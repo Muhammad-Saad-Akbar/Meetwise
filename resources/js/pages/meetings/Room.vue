@@ -250,6 +250,17 @@ const initEcho = () => {
 
 onMounted(async () => {
 
+    // Read mic/camera preferences set by WaitingRoom
+    const joinPrefsRaw = sessionStorage.getItem('meetingJoinPrefs')
+    if (joinPrefsRaw) {
+        try {
+            const joinPrefs = JSON.parse(joinPrefsRaw)
+            if (joinPrefs.cameraOff) isCameraOff.value = true
+            if (joinPrefs.micMuted) isMicMuted.value = true
+        } catch (e) { /* ignore parse errors */ }
+        sessionStorage.removeItem('meetingJoinPrefs')
+    }
+
     try {
         const res = await axios.post('/agora/token', {
             channel: props.meeting.meeting_code
@@ -278,7 +289,18 @@ onMounted(async () => {
         //  Create Mic + Camera
         const tracks = await AgoraRTC.createMicrophoneAndCameraTracks()
         localTracks.value = tracks
-        tracks[1].play("local-player")
+
+        // Apply waiting room preferences
+        if (isMicMuted.value) {
+            await tracks[0].setMuted(true)
+        }
+
+        if (isCameraOff.value) {
+            await tracks[1].setEnabled(false)
+        } else {
+            tracks[1].play("local-player")
+        }
+
         await client.publish(tracks)
         console.log("Published local tracks")
 

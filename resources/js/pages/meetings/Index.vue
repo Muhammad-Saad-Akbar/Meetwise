@@ -106,7 +106,7 @@ const getJoinTooltip = (meeting) => {
                         </p>
                         <div :title="getJoinTooltip(meeting)">
                             <template v-if="!isJoinDisabled(meeting)">
-                                <Link :href="route('meetings.room', meeting.meeting_code)">
+                                <Link :href="route('meetings.waitingRoom', meeting.meeting_code)">
                                     <Button>Start Meeting</Button>
                                 </Link>
                             </template>
