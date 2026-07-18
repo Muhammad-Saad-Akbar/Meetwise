@@ -95,6 +95,29 @@ class MeetingController extends Controller
         return Inertia::render('meetings/WaitingRoom', compact('meeting'));
     }
 
+    public function joinViaLink($meeting_code)
+    {
+        $meeting = Meeting::where('meeting_code', $meeting_code)->first();
+
+        if (!$meeting) {
+            abort(404);
+        }
+
+        if ($meeting->status === 'ended') {
+            return redirect()->route('home')
+                ->with('joinMessage', 'This meeting has already ended.');
+        }
+
+        // Not logged in → send to register with a message
+        if (!auth()->check()) {
+            return redirect()->route('register')
+                ->with('joinMessage', 'You must sign up before joining a meeting. After signing up, click the meeting link again to join.');
+        }
+
+        // Logged in → send to waiting room
+        return redirect()->route('meetings.waitingRoom', $meeting->meeting_code);
+    }
+
     public function generateToken(Request $request)
     {
         $request->validate([

@@ -15,6 +15,9 @@ Route::get('dashboard', function () {
     return Inertia::render('Dashboard');
 })->middleware(['auth', 'verified'])->name('dashboard');
 
+// Public meeting join link — no auth middleware
+Route::get('/join/{meeting_code}', [MeetingController::class, 'joinViaLink'])->name('meetings.joinViaLink');
+
 Route::middleware(['auth'])->group(function () {
    Route::get('/meetings', [MeetingController::class, 'index'])->name('meetings.index');
    Route::get('/meetings/create', [MeetingController::class, 'create'])->name('meetings.create');

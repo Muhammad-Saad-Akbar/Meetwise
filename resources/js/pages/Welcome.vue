@@ -17,6 +17,7 @@ withDefaults(
         <link rel="preconnect" href="https://rsms.me/" />
         <link rel="stylesheet" href="https://rsms.me/inter/inter.css" />
     </Head>
+
     <div
         class="min-h-screen bg-[#FDFDFC] p-6 text-[#1b1b18] lg:p-8 dark:bg-[#0a0a0a]">
         <div class="flex justify-end">
@@ -49,6 +50,12 @@ withDefaults(
                 </nav>
             </header>
         </div>
-            <h1 class="text-blue-500 text-center mt-28 text-3xl font-bold">Meetwise</h1>
+        <!-- Show message when redirected from a meeting link -->
+        <div v-if="$page.props.flash?.joinMessage" class="text-blue-800 text-lg text-center mt-20 font-medium">
+
+            {{ $page.props.flash.joinMessage }}
+
+        </div>
+        <h1 class="text-blue-500 text-center mt-28 text-3xl font-bold">Meetwise</h1>
     </div>
 </template>

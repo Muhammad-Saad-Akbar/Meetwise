@@ -18,6 +18,14 @@ import { Form, Head } from '@inertiajs/vue3';
     >
         <Head title="Register" />
 
+        <!-- Show message when redirected from a meeting link -->
+        <div
+            v-if="$page.props.flash?.joinMessage"
+            class="mb-4 p-3 bg-blue-50 border border-blue-200 text-blue-800 rounded text-sm"
+        >
+            {{ $page.props.flash.joinMessage }}
+        </div>
+
         <Form
             v-bind="store.form()"
             :reset-on-success="['password', 'password_confirmation']"
