@@ -25,6 +25,7 @@ Route::middleware(['auth'])->group(function () {
    Route::get('/meetings/join', [MeetingController::class, 'joinForm'])->name('meetings.joinForm');
    Route::post('/meetings/join', [MeetingController::class, 'join'])->name('meetings.join');
    Route::get('/meetings/{meeting_code}/waiting-room', [MeetingController::class, 'waitingRoom'])->name('meetings.waitingRoom');
+   Route::get('/meetings/{meeting_code}/ended', [MeetingController::class, 'meetingEnded'])->name('meetings.ended');
    Route::get('/meetings/{meeting_code}', [MeetingController::class, 'room'])->name('meetings.room');
    Route::post('/agora/token', [MeetingController::class, 'generateToken'])->name('agora.token');
    Route::post('/meetings/{meeting_code}/messages', [MeetingController::class, 'sendMessage']);

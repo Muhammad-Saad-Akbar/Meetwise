@@ -6,6 +6,7 @@ import axios from 'axios'
 import AgoraRTC from "agora-rtc-sdk-ng"
 import Echo from 'laravel-echo'
 import Pusher from 'pusher-js'
+import { useNavigationGuard } from '@/composables/useNavigationGuard'
 
 const page = usePage()
 const props = defineProps({
@@ -33,6 +34,9 @@ const isHost = page.props.auth.user.id === props.meeting.host_id;
 let savedCameraMediaTrack = null
 
 let echo = null
+
+// Disable browser Back, Forward, and Reload buttons
+useNavigationGuard()
 
 const toggleChat = () => {
     showChat.value = !showChat.value
@@ -104,7 +108,7 @@ const endMeeting = async () => {
         console.error('Failed to end meeting on backend:', e)
     }
     await cleanupRTC()
-    router.visit(route('meetings.index'))
+    router.visit(route('meetings.ended', props.meeting.meeting_code))
 }
 
 // --- Poll status (participants only — detect when host ends meeting) ---
@@ -114,7 +118,7 @@ const startStatusPolling = () => {
             const res = await axios.get(route('meetings.checkStatus', props.meeting.meeting_code))
             if (res.data.status === 'ended') {
                 await cleanupRTC()
-                router.visit(route('meetings.index'))
+                router.visit(route('meetings.ended', props.meeting.meeting_code))
             }
         } catch (e) {
             console.error('Status poll error:', e)

@@ -141,18 +141,16 @@ const copyMeetingLink = async (meeting) => {
                         <!-- Start Meeting button -->
                         <div :title="getJoinTooltip(meeting)">
                             <template v-if="!isJoinDisabled(meeting)">
-                                <Link :href="route('meetings.waitingRoom', meeting.meeting_code)">
+                                <a :href="route('meetings.waitingRoom', meeting.meeting_code)" target="_blank" rel="noopener">
                                     <Button>Start Meeting</Button>
-                                </Link>
+                                </a>
                             </template>
                             <template v-else>
                                 <Button disabled>Start Meeting</Button>
                             </template>
                         </div>
-
                     </div>
                 </div>
-
                 <p v-if="meetings.length === 0">No meetings yet.</p>
             </div>
         </div>

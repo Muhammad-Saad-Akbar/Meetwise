@@ -1,10 +1,14 @@
 <script setup>
-import { Head, Link, router } from '@inertiajs/vue3'
+import { Head, router } from '@inertiajs/vue3'
 import { ref, onMounted, onUnmounted } from 'vue'
+import { useNavigationGuard } from '@/composables/useNavigationGuard'
 
 const props = defineProps({
     meeting: Object
 })
+
+// Disable browser Back, Forward, and Reload buttons
+useNavigationGuard()
 
 const videoRef = ref(null)
 let previewStream = null
@@ -42,18 +46,26 @@ const toggleMic = () => {
 }
 
 const joinMeeting = () => {
-    // Save mic/camera preferences so Room.vue applies them immediately on mount
     sessionStorage.setItem('meetingJoinPrefs', JSON.stringify({
         cameraOff: isCameraOff.value,
         micMuted: isMicMuted.value
     }))
 
-    // Stop preview tracks so Room.vue can access camera/mic fresh via Agora
     if (previewStream) {
         previewStream.getTracks().forEach(track => track.stop())
     }
 
     router.visit(route('meetings.room', props.meeting.meeting_code))
+}
+
+const cancel = () => {
+    if (previewStream) {
+        previewStream.getTracks().forEach(track => track.stop())
+    }
+    // Try to close this tab (works because it was opened via target="_blank")
+    // Falls back to navigating to meetings index if browser blocks window.close()
+    window.close()
+    router.visit(route('meetings.index'))
 }
 
 onMounted(() => {
@@ -164,12 +176,12 @@ onUnmounted(() => {
 
             <!-- Action Buttons -->
             <div class="flex items-center justify-center gap-4">
-                <Link
-                    :href="route('meetings.index')"
+                <button
+                    @click="cancel"
                     class="px-6 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white transition text-sm font-medium"
                 >
                     Cancel
-                </Link>
+                </button>
                 <button
                     @click="joinMeeting"
                     class="px-8 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white transition font-semibold text-sm"

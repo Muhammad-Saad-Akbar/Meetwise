@@ -95,6 +95,12 @@ class MeetingController extends Controller
         return Inertia::render('meetings/WaitingRoom', compact('meeting'));
     }
 
+    public function meetingEnded($meeting_code)
+    {
+        $meeting = Meeting::with('host')->where('meeting_code', $meeting_code)->firstOrFail();
+        return Inertia::render('meetings/MeetingEnd', compact('meeting'));
+    }
+
     public function joinViaLink($meeting_code)
     {
         $meeting = Meeting::where('meeting_code', $meeting_code)->first();
