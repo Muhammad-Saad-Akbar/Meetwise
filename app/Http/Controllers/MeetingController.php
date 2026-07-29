@@ -43,6 +43,60 @@ class MeetingController extends Controller
         return redirect()->route('meetings.index');
     }
 
+    public function edit($meeting_code)
+    {
+        $meeting = Meeting::where('meeting_code', $meeting_code)
+            ->where('host_id', auth()->id())
+            ->firstOrFail();
+
+        // Only scheduled upcoming meetings can be edited
+        if ($meeting->type !== 'scheduled' || $meeting->status !== 'upcoming') {
+            return redirect()->route('meetings.index');
+        }
+
+        return Inertia::render('meetings/Edit', compact('meeting'));
+    }
+
+    public function update(Request $request, $meeting_code)
+    {
+        $meeting = Meeting::where('meeting_code', $meeting_code)
+            ->where('host_id', auth()->id())
+            ->firstOrFail();
+
+        // Only scheduled upcoming meetings can be updated
+        if ($meeting->type !== 'scheduled' || $meeting->status !== 'upcoming') {
+            return redirect()->route('meetings.index');
+        }
+
+        $request->validate([
+            'title'        => 'required|string|max:255',
+            'scheduled_at' => 'required|date|after:now',
+        ]);
+
+        $meeting->update([
+            'title'        => $request->title,
+            'scheduled_at' => $request->scheduled_at,
+        ]);
+
+        return redirect()->route('meetings.index');
+    }
+
+    public function destroy($meeting_code)
+    {
+        $meeting = Meeting::where('meeting_code', $meeting_code)
+            ->where('host_id', auth()->id())
+            ->firstOrFail();
+
+        // Only scheduled meetings can be deleted
+        if ($meeting->type !== 'scheduled') {
+            return redirect()->route('meetings.index');
+        }
+
+        $meeting->delete();
+
+        return redirect()->route('meetings.index');
+    }
+
     public function joinForm()
     {
         return Inertia::render('meetings/Join', []);

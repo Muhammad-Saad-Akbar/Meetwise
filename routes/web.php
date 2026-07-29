@@ -22,6 +22,9 @@ Route::middleware(['auth'])->group(function () {
    Route::get('/meetings', [MeetingController::class, 'index'])->name('meetings.index');
    Route::get('/meetings/create', [MeetingController::class, 'create'])->name('meetings.create');
    Route::post('/meetings', [MeetingController::class, 'store'])->name('meetings.store');
+   Route::get('/meetings/{meeting_code}/edit', [MeetingController::class, 'edit'])->name('meetings.edit');
+   Route::put('/meetings/{meeting_code}', [MeetingController::class, 'update'])->name('meetings.update');
+   Route::delete('/meetings/{meeting_code}', [MeetingController::class, 'destroy'])->name('meetings.destroy');
    Route::get('/meetings/join', [MeetingController::class, 'joinForm'])->name('meetings.joinForm');
    Route::post('/meetings/join', [MeetingController::class, 'join'])->name('meetings.join');
    Route::get('/meetings/{meeting_code}/waiting-room', [MeetingController::class, 'waitingRoom'])->name('meetings.waitingRoom');
