@@ -25,21 +25,26 @@ class MeetingController extends Controller
         return Inertia::render('meetings/Create', []);
     }
 
-
     public function store(StoreMeetingRequest $request)
     {
-        Meeting::create([
-            'title' => $request->title,
-            'host_id' => auth()->id(),
+        $meeting = Meeting::create([
+            'title'        => $request->title,
+            'host_id'      => auth()->id(),
             'meeting_code' => Str::uuid(),
-            'type' => $request->type,
+            'type'         => $request->type,
             'scheduled_at' => $request->type === 'scheduled'
                 ? $request->scheduled_at
                 : null,
-            'status' => 'upcoming',
+            'status'       => 'upcoming',
         ]);
 
-        Inertia::flash('message', 'User created successfully!');
+        // Instant meeting → flash the meeting_code so Index.vue can open it in a new tab
+        if ($request->type === 'instant') {
+            return redirect()->route('meetings.index')
+                ->with('instantMeetingCode', $meeting->meeting_code);
+        }
+
+        // Scheduled meeting → redirect normally
         return redirect()->route('meetings.index');
     }
 

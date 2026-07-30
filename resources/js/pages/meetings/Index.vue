@@ -18,6 +18,11 @@ onMounted(() => {
     timer = setInterval(() => {
         now.value = new Date()
     }, 60000)
+
+    // Auto-open waiting room in new tab when an instant meeting is just created
+    if (page.props.flash?.instantMeetingCode) {
+        window.open(route('meetings.waitingRoom', page.props.flash.instantMeetingCode), '_blank')
+    }
 });
 
 onUnmounted(() => {
@@ -157,7 +162,7 @@ const deleteMeeting = (meeting) => {
                             Edit
                         </Link>
 
-                        <!-- Delete button — scheduled meetings only -->
+                        <!-- Delete button — scheduled meetings only, not while live -->
                         <button
                             v-if="meeting.type === 'scheduled' && meeting.status !== 'live'"
                             @click="deleteMeeting(meeting)"

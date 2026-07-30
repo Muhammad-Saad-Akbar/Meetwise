@@ -43,8 +43,9 @@ class HandleInertiaRequests extends Middleware
             ],
             'sidebarOpen' => ! $request->hasCookie('sidebar_state') || $request->cookie('sidebar_state') === 'true',
             'flash' => [
-                'toast' => $request->session()->get('toast'),
-                'joinMessage' => $request->session()->get('joinMessage'), // ADD THIS LINE
+                'toast'               => $request->session()->get('toast'),
+                'joinMessage'         => $request->session()->get('joinMessage'),
+                'instantMeetingCode'  => $request->session()->get('instantMeetingCode'),
             ],
         ];
     }
