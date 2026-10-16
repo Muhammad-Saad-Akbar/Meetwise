@@ -3,8 +3,11 @@
 namespace App\Http\Controllers;
 
 use App\Models\Meeting;
+use App\Models\Recording;
 use App\Http\Requests\StoreMeetingRequest;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Inertia\Inertia;
 use App\Services\Agora\RtcTokenBuilder;
@@ -16,7 +19,10 @@ class MeetingController extends Controller
     //
     public function index()
     {
-        $meetings = Meeting::where('host_id', auth()->id())->latest()->get();
+        $meetings = Meeting::where('host_id', auth()->id())
+            ->withCount(['recordings' => fn ($query) => $query->where('status', 'completed')])
+            ->latest()
+            ->get();
         return Inertia::render('meetings/Index', compact('meetings'));
     }
 
@@ -95,6 +101,11 @@ class MeetingController extends Controller
         // Only scheduled meetings can be deleted
         if ($meeting->type !== 'scheduled') {
             return redirect()->route('meetings.index');
+        }
+
+        // Remove recording files from disk (DB rows are removed by the cascade)
+        foreach ($meeting->recordings as $recording) {
+            Storage::disk('local')->delete($recording->file_path);
         }
 
         $meeting->delete();
@@ -281,6 +292,12 @@ class MeetingController extends Controller
 
         $meeting->update(['status' => 'ended']);
 
+        // Safety net: close any recording that is still open when the meeting ends
+        $meeting->recordings()
+            ->where('status', 'recording')
+            ->get()
+            ->each(fn (Recording $recording) => $this->finalizeRecording($recording));
+
         return response()->json(['status' => 'ended']);
     }
 
@@ -288,7 +305,201 @@ class MeetingController extends Controller
     {
         $meeting = Meeting::where('meeting_code', $meeting_code)->firstOrFail();
 
-        return response()->json(['status' => $meeting->status]);
+        return response()->json([
+            'status'       => $meeting->status,
+            // Lets participants see the "meeting is being recorded" banner (picked up by the existing poll)
+            'is_recording' => $meeting->recordings()->where('status', 'recording')->exists(),
+        ]);
+    }
+
+    /* ─────────────────────────────────────────────────────────────
+     |  MEETING RECORDING
+     |  The host's browser records the meeting and uploads it in
+     |  small chunks while the meeting is running. Files are kept on
+     |  the private "local" disk and only streamed to the host.
+     ───────────────────────────────────────────────────────────── */
+
+    // Host starts a new recording → create the DB row the chunks will attach to
+    public function startRecording($meeting_code)
+    {
+        $meeting = $this->hostMeeting($meeting_code);
+
+        if ($meeting->status === 'ended') {
+            return response()->json(['error' => 'This meeting has already ended.'], 422);
+        }
+
+        // Close any leftover open recording (e.g. from a crashed tab) before starting a new one
+        $meeting->recordings()
+            ->where('status', 'recording')
+            ->get()
+            ->each(fn (Recording $recording) => $this->finalizeRecording($recording));
+
+        $recording = $meeting->recordings()->create([
+            'file_path'  => "recordings/{$meeting->id}/" . Str::uuid() . '.webm',
+            'mime_type'  => 'video/webm',
+            'status'     => 'recording',
+            'started_at' => now(),
+        ]);
+
+        return response()->json(['id' => $recording->id]);
+    }
+
+    // Receives one chunk of the recording and appends it to the file
+    public function uploadRecordingChunk(Request $request, $meeting_code, Recording $recording)
+    {
+        $meeting = $this->hostMeeting($meeting_code);
+        abort_unless($recording->meeting_id === $meeting->id, 404);
+
+        $request->validate([
+            'chunk' => 'required|file|max:20480', // KB
+            'index' => 'required|integer|min:0',
+        ]);
+
+        $index = (int) $request->input('index');
+
+        return DB::transaction(function () use ($recording, $request, $index) {
+            $recording = Recording::whereKey($recording->id)->lockForUpdate()->first();
+
+            if ($recording->status !== 'recording') {
+                return response()->json(['error' => 'Recording is not active.'], 409);
+            }
+
+            // Retry of a chunk we already stored (response got lost) → acknowledge, don't append twice
+            if ($index < $recording->chunk_count) {
+                return response()->json(['received' => $recording->chunk_count]);
+            }
+
+            // A chunk was skipped → appending would corrupt the file
+            if ($index > $recording->chunk_count) {
+                return response()->json([
+                    'error'    => 'Out-of-order chunk.',
+                    'expected' => $recording->chunk_count,
+                ], 409);
+            }
+
+            $disk = Storage::disk('local');
+            $disk->makeDirectory(dirname($recording->file_path));
+
+            $in  = fopen($request->file('chunk')->getRealPath(), 'rb');
+            $out = fopen($disk->path($recording->file_path), 'ab');
+            stream_copy_to_stream($in, $out);
+            fclose($in);
+            fclose($out);
+
+            $recording->increment('chunk_count');
+
+            return response()->json(['received' => $recording->chunk_count]);
+        });
+    }
+
+    // Host stops recording → finalize size + duration
+    public function stopRecording($meeting_code, Recording $recording)
+    {
+        $meeting = $this->hostMeeting($meeting_code);
+        abort_unless($recording->meeting_id === $meeting->id, 404);
+
+        $this->finalizeRecording($recording);
+
+        return response()->json(['status' => 'completed']);
+    }
+
+    // List a meeting's recordings (watch page)
+    public function recordings($meeting_code)
+    {
+        $meeting = $this->hostMeeting($meeting_code);
+
+        $recordings = $meeting->recordings()
+            ->where('status', 'completed')
+            ->latest()
+            ->get()
+            ->map(fn (Recording $r) => [
+                'id'         => $r->id,
+                'created_at' => $r->created_at,
+                'duration'   => $r->duration,
+                'size'       => $r->size,
+            ])
+            ->values();
+
+        return Inertia::render('meetings/Recordings', compact('meeting', 'recordings'));
+    }
+
+    // Stream the video file (supports HTTP Range so the player can seek)
+    public function streamRecording(Recording $recording)
+    {
+        $this->authorizeRecording($recording);
+
+        $disk = Storage::disk('local');
+        abort_unless($disk->exists($recording->file_path), 404);
+
+        return response()->file($disk->path($recording->file_path), [
+            'Content-Type' => $recording->mime_type,
+        ]);
+    }
+
+    public function downloadRecording(Recording $recording)
+    {
+        $this->authorizeRecording($recording);
+
+        $disk = Storage::disk('local');
+        abort_unless($disk->exists($recording->file_path), 404);
+
+        $filename = Str::slug($recording->meeting->title ?: 'meeting')
+            . '-' . $recording->created_at->format('Y-m-d-His') . '.webm';
+
+        return response()->download($disk->path($recording->file_path), $filename, [
+            'Content-Type' => $recording->mime_type,
+        ]);
+    }
+
+    public function destroyRecording(Recording $recording)
+    {
+        $this->authorizeRecording($recording);
+
+        $meetingCode = $recording->meeting->meeting_code;
+
+        Storage::disk('local')->delete($recording->file_path);
+        $recording->delete();
+
+        return redirect()->route('meetings.recordings', $meetingCode);
+    }
+
+    // ── helpers ──
+
+    private function hostMeeting($meeting_code): Meeting
+    {
+        return Meeting::where('meeting_code', $meeting_code)
+            ->where('host_id', auth()->id())
+            ->firstOrFail();
+    }
+
+    private function authorizeRecording(Recording $recording): void
+    {
+        abort_unless(
+            $recording->status === 'completed'
+                && $recording->meeting->host_id === auth()->id(),
+            404
+        );
+    }
+
+    private function finalizeRecording(Recording $recording): void
+    {
+        if ($recording->status === 'completed') {
+            return;
+        }
+
+        // Nothing was ever uploaded → don't keep an empty recording around
+        if ($recording->chunk_count === 0) {
+            $recording->delete();
+            return;
+        }
+
+        $disk = Storage::disk('local');
+
+        $recording->update([
+            'status'   => 'completed',
+            'size'     => $disk->exists($recording->file_path) ? $disk->size($recording->file_path) : 0,
+            'ended_at' => now(),
+            'duration' => max(0, now()->timestamp - $recording->started_at->timestamp),
+        ]);
     }
 }
-

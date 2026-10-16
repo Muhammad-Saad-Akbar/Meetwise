@@ -262,15 +262,12 @@ watch(activeIndex, (index) => {
                 </div>
 
                 <!-- Headline -->
-                <h1
-                    class="font-medium tracking-tight mb-6"
+                <h1 class="font-medium tracking-tight mb-6"
                     style="
                         font-size: clamp(2.5rem, 6vw, 4.5rem);
                         line-height: 1.1;
                         letter-spacing: -0.03em;
-                        color: #edf7f5;
-                    "
-                >
+                        color: #edf7f5;">
                     Video Meetings That Keep<br />
                     Your Whole Team
                     <span class="hero-serif-italic">Moving Forward</span>

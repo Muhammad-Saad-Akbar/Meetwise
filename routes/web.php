@@ -36,6 +36,13 @@ Route::middleware(['auth'])->group(function () {
    Route::post('/meetings/{meeting_code}/start', [MeetingController::class, 'startMeeting'])->name('meetings.start');
    Route::post('/meetings/{meeting_code}/end', [MeetingController::class, 'endMeeting'])->name('meetings.end');
    Route::get('/meetings/{meeting_code}/status', [MeetingController::class, 'checkStatus'])->name('meetings.checkStatus');
+   Route::post('/meetings/{meeting_code}/recordings', [MeetingController::class, 'startRecording'])->name('meetings.recordings.start');
+   Route::post('/meetings/{meeting_code}/recordings/{recording}/chunks', [MeetingController::class, 'uploadRecordingChunk'])->name('meetings.recordings.chunk');
+   Route::post('/meetings/{meeting_code}/recordings/{recording}/stop', [MeetingController::class, 'stopRecording'])->name('meetings.recordings.stop');
+   Route::get('/meetings/{meeting_code}/recordings', [MeetingController::class, 'recordings'])->name('meetings.recordings');
+   Route::get('/recordings/{recording}/stream', [MeetingController::class, 'streamRecording'])->name('recordings.stream');
+   Route::get('/recordings/{recording}/download', [MeetingController::class, 'downloadRecording'])->name('recordings.download');
+   Route::delete('/recordings/{recording}', [MeetingController::class, 'destroyRecording'])->name('recordings.destroy');
 });
 
 require __DIR__.'/settings.php';

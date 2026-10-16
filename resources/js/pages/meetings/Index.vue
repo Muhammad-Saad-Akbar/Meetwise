@@ -148,6 +148,20 @@ const deleteMeeting = (meeting) => {
                             {{ copiedCode === meeting.meeting_code ? 'Copied!' : 'Copy Link' }}
                         </button>
 
+                        <!-- Recordings button — only when this meeting has saved recordings -->
+                        <Link
+                            v-if="meeting.recordings_count > 0"
+                            :href="route('meetings.recordings', meeting.meeting_code)"
+                            class="px-3 py-2 rounded text-sm font-medium bg-blue-100 hover:bg-blue-200 text-blue-800 transition flex items-center gap-1.5"
+                            title="Watch recordings of this meeting"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M15 10l4.553-2.069A1 1 0 0121 8.82v6.36a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z" />
+                            </svg>
+                            Recordings ({{ meeting.recordings_count }})
+                        </Link>
+
                         <!-- Edit button — scheduled + upcoming meetings only -->
                         <Link
                             v-if="meeting.type === 'scheduled' && meeting.status === 'upcoming'"

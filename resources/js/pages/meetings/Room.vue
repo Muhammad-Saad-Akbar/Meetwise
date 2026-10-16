@@ -1,12 +1,13 @@
 <script setup>
 import {Head, router} from '@inertiajs/vue3'
-import { ref, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { usePage } from '@inertiajs/vue3'
 import axios from 'axios'
 import AgoraRTC from "agora-rtc-sdk-ng"
 import Echo from 'laravel-echo'
 import Pusher from 'pusher-js'
 import { useNavigationGuard } from '@/composables/useNavigationGuard'
+import { useMeetingRecorder } from '@/composables/useMeetingRecorder'
 
 const page = usePage()
 const props = defineProps({
@@ -35,6 +36,23 @@ let savedCameraMediaTrack = null
 
 let echo = null
 
+//  Recording State
+// Host: recorded in this browser by the composable.
+// Participants: only see a banner (is_recording comes from the status poll).
+const {
+    isRecording,
+    isBusy: isRecorderBusy,
+    error: recordingError,
+    formattedTime,
+    registerAudioTrack,
+    unregisterAudioTrack,
+    start: startRecording,
+    stop: stopRecording,
+} = useMeetingRecorder(props.meeting.meeting_code)
+
+const isMeetingBeingRecorded = ref(false)
+const showRecordingBanner = computed(() => isRecording.value || isMeetingBeingRecorded.value)
+
 // Disable browser Back, Forward, and Reload buttons
 useNavigationGuard()
 
@@ -47,6 +65,15 @@ const toggleChat = () => {
 const toggleParticipants = () => {
     showParticipants.value = !showParticipants.value
     showChat.value = false
+}
+
+// --- Recording Toggle (host only) ---
+const toggleRecording = async () => {
+    if (isRecording.value) {
+        await stopRecording()
+    } else {
+        await startRecording()
+    }
 }
 
 // --- Mic Toggle ---
@@ -102,6 +129,12 @@ const leaveRoom = async () => {
 
 // --- End Meeting (host only) ---
 const endMeeting = async () => {
+    // Finish uploading an in-progress recording BEFORE leaving the page,
+    // otherwise the last chunks would be lost.
+    if (isRecording.value) {
+        await stopRecording()
+    }
+
     try {
         await axios.post(route('meetings.end', props.meeting.meeting_code))
     } catch (e) {
@@ -111,19 +144,23 @@ const endMeeting = async () => {
     router.visit(route('meetings.ended', props.meeting.meeting_code))
 }
 
-// --- Poll status (participants only — detect when host ends meeting) ---
-const startStatusPolling = () => {
-    statusPollInterval.value = setInterval(async () => {
-        try {
-            const res = await axios.get(route('meetings.checkStatus', props.meeting.meeting_code))
-            if (res.data.status === 'ended') {
-                await cleanupRTC()
-                router.visit(route('meetings.ended', props.meeting.meeting_code))
-            }
-        } catch (e) {
-            console.error('Status poll error:', e)
+// --- Poll status (participants only — detect when host ends meeting + recording banner) ---
+const pollStatus = async () => {
+    try {
+        const res = await axios.get(route('meetings.checkStatus', props.meeting.meeting_code))
+        isMeetingBeingRecorded.value = !!res.data.is_recording
+        if (res.data.status === 'ended') {
+            await cleanupRTC()
+            router.visit(route('meetings.ended', props.meeting.meeting_code))
         }
-    }, 10000)
+    } catch (e) {
+        console.error('Status poll error:', e)
+    }
+}
+
+const startStatusPolling = () => {
+    pollStatus() // check once right away so the recording banner shows up immediately
+    statusPollInterval.value = setInterval(pollStatus, 10000)
 }
 
 // Stop Screen Share
@@ -294,6 +331,11 @@ onMounted(async () => {
         const tracks = await AgoraRTC.createMicrophoneAndCameraTracks()
         localTracks.value = tracks
 
+        // Host → the host's own mic goes into the recording mix
+        if (isHost) {
+            registerAudioTrack('local', tracks[0].getMediaStreamTrack())
+        }
+
         // Apply waiting room preferences
         if (isMicMuted.value) {
             await tracks[0].setMuted(true)
@@ -326,7 +368,20 @@ onMounted(async () => {
 
             if (mediaType === "audio") {
                 user.audioTrack.play()
+
+                // Host → add this participant's voice to the recording mix
+                if (isHost) {
+                    registerAudioTrack(user.uid, user.audioTrack.getMediaStreamTrack())
+                }
             }
+        })
+
+        // Host → keep the recording's audio mix in sync when people stop sharing / leave
+        client.on("user-unpublished", (user, mediaType) => {
+            if (mediaType === "audio") unregisterAudioTrack(user.uid)
+        })
+        client.on("user-left", (user) => {
+            unregisterAudioTrack(user.uid)
         })
     } catch (error) {
         console.error("Agora Error:", error)
@@ -360,14 +415,27 @@ onUnmounted(async () => {
     <div class="h-screen flex flex-col bg-gray-900 text-white">
 
         <!-- Header -->
-        <div class="p-4 border-b border-gray-700 flex justify-between">
+        <div class="p-4 border-b border-gray-700 flex justify-between items-center">
             <h1 class="text-lg font-semibold">
                 {{ meeting.title }}
             </h1>
+
+            <!-- Recording indicator (host sees the timer, participants see a notice) -->
+            <div v-if="showRecordingBanner" class="flex items-center gap-2 text-sm text-red-400">
+                <span class="h-2.5 w-2.5 rounded-full bg-red-500 animate-pulse"></span>
+                <span v-if="isRecording">REC {{ formattedTime }}</span>
+                <span v-else>This meeting is being recorded</span>
+            </div>
+
             <p class="text-sm text-gray-400">
                 Host: {{ meeting.host.name }}
             </p>
         </div>
+
+        <!-- Recording error (host only — the composable only sets it for the host) -->
+        <p v-if="recordingError" class="px-4 py-2 text-sm text-center text-red-300 bg-red-900/40">
+            {{ recordingError }}
+        </p>
 
         <!-- Main Content -->
         <div class="flex flex-1 overflow-hidden">
@@ -484,6 +552,22 @@ onUnmounted(async () => {
 
             <button @click="toggleScreenShare" class="bg-gray-700 px-4 py-2 rounded hover:bg-gray-600">
                 {{ isScreenSharing ? 'Stop Share' : 'Share Screen' }}
+            </button>
+
+            <!-- Record Button (host only) -->
+            <button
+                v-if="isHost"
+                @click="toggleRecording"
+                :disabled="isRecorderBusy"
+                :class="isRecording ? 'bg-red-600 hover:bg-red-700' : 'bg-gray-700 hover:bg-gray-600'"
+                class="px-4 py-2 rounded flex items-center gap-2 disabled:opacity-50"
+                :title="isRecording ? 'Stop recording' : 'Record this meeting'"
+            >
+                <span
+                    class="h-2.5 w-2.5 rounded-full"
+                    :class="isRecording ? 'bg-white animate-pulse' : 'bg-red-500'"
+                ></span>
+                {{ isRecording ? 'Stop Recording' : 'Record' }}
             </button>
 
             <button @click="toggleParticipants" class="bg-gray-700 px-4 py-2 rounded hover:bg-gray-600">

@@ -23,4 +23,10 @@ class Meeting extends Model
     {
         return $this->belongsTo(User::class, 'host_id');
     }
+
+    // Relationship: Meeting has many Recordings
+    public function recordings()
+    {
+        return $this->hasMany(Recording::class);
+    }
 }
