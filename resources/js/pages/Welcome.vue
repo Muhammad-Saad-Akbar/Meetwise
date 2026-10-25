@@ -98,6 +98,231 @@ watch(activeIndex, (index) => {
         gsap.to(el, { opacity: i === index ? 1 : 0.1, duration: 0.5, ease: 'power2.out' });
     });
 });
+
+/* ═══════════════════════════════════════════════════════ */
+/* HOW IT WORKS SECTION — DATA                             */
+/* ═══════════════════════════════════════════════════════ */
+interface HowItWorksStep {
+    id: string;
+    title: string;
+    description: string;
+    icon: 'user' | 'link' | 'room'; // picks the back-layer shape + front icon in the template
+}
+
+const steps: HowItWorksStep[] = [
+    {
+        id: 'account',
+        title: 'Sign Up or Log In',
+        description:
+            'Create your free account or log in in seconds. Your meetings, recordings, and notes are saved to your account.',
+        icon: 'user',
+    },
+    {
+        id: 'meeting',
+        title: 'Create or Join a Meeting',
+        description: "Start a new meeting with one click, or paste a shared link to join someone else's.",
+        icon: 'link',
+    },
+    {
+        id: 'room',
+        title: 'Land in the Meeting Room',
+        description:
+            "You're in. Camera, mic, screen share, chat, and AI notes are all ready the moment you arrive.",
+        icon: 'room',
+    },
+];
+
+/* ═══════════════════════════════════════════════════════ */
+/* HOW IT WORKS SECTION — ANIMATION                        */
+/* ═══════════════════════════════════════════════════════ */
+
+// Timeline layout (in timeline units — scrub maps these linearly onto scroll distance)
+const HIW_STEP_PERIOD = 4; // a step starts this long after the previous one started
+const HIW_LINE_DELAY = 0.4; // badge dot + line start this long after the step starts
+const HIW_LINE_LEN = HIW_STEP_PERIOD - HIW_LINE_DELAY; // line arrives exactly as the next step starts
+const HIW_LAST_LINE_LEN = 2.7; // the last line is shorter (it only runs a little past its column)
+const HIW_HOLD = 1; // empty tail so the finished state stays on screen while the pin releases
+const HIW_SCROLL_VIEWPORTS = 5; // pinned scroll distance, in viewport heights (higher = slower animation)
+const HIW_SCRUB = 1.5; // seconds of smoothing behind the scrollbar (higher = softer, lazier follow)
+
+// Icon "washed out" → "crisp" filter pair (same function list, so GSAP can interpolate it)
+const HIW_ICON_DIM = 'brightness(0.55) contrast(0.7)';
+const HIW_ICON_SHARP = 'brightness(1) contrast(1)';
+
+const hiwSection = ref<HTMLElement | null>(null);
+let hiwContext: gsap.Context | null = null;
+let hiwMedia: gsap.MatchMedia | null = null;
+let hiwDisposed = false;
+
+interface HiwStepEls {
+    root: HTMLElement;
+    box: HTMLElement;
+    icon: HTMLElement;
+    badge: HTMLElement;
+    badgeNum: HTMLElement;
+    line: HTMLElement;
+    title: HTMLElement;
+    desc: HTMLElement;
+}
+
+// Collect each step's animated elements via data-hiw attributes
+function getHiwSteps(section: HTMLElement): HiwStepEls[] {
+    return Array.from(section.querySelectorAll<HTMLElement>('[data-hiw="step"]')).map((root) => {
+        const pick = (key: string) => root.querySelector<HTMLElement>(`[data-hiw="${key}"]`)!;
+        return {
+            root,
+            box: pick('box'),
+            icon: pick('icon'),
+            badge: pick('badge'),
+            badgeNum: pick('badge-num'),
+            line: pick('line'),
+            title: pick('title'),
+            desc: pick('desc'),
+        };
+    });
+}
+
+// Everything starts hidden — set before the first scroll so nothing flashes
+function setHiwInitialState(els: HiwStepEls[]) {
+    els.forEach((s) => {
+        gsap.set(s.box, { opacity: 0 });
+        gsap.set(s.icon, { opacity: 0.15, filter: HIW_ICON_DIM });
+        gsap.set(s.badge, { opacity: 0, scale: 0.2, transformOrigin: '50% 50%' });
+        gsap.set(s.badgeNum, { opacity: 0 });
+        gsap.set(s.line, { scaleX: 0, transformOrigin: 'left center' });
+        gsap.set(s.title, { opacity: 0, y: 40 });
+        gsap.set(s.desc, { opacity: 0, y: 50 }); // trails the title a little further down
+    });
+}
+
+// Text slides up while its opacity passes through a visibly dimmed stage (~35%) before full colour
+function addTextReveal(tl: gsap.core.Timeline, el: HTMLElement, at: number) {
+    tl.to(el, { y: 0, duration: 1.2, ease: 'power3.out' }, at);
+    tl.to(el, { opacity: 0.35, duration: 0.5, ease: 'power2.out' }, at);
+    tl.fromTo(
+        el,
+        { opacity: 0.35 },
+        { opacity: 1, duration: 0.7, ease: 'power1.inOut', immediateRender: false },
+        at + 0.5,
+    );
+}
+
+// Desktop: ONE scrubbed + pinned timeline that builds the three steps one after another
+function buildHiwPinnedTimeline(section: HTMLElement, els: HiwStepEls[]) {
+    setHiwInitialState(els);
+
+    // The navbar is sticky and takes real space, so the pin starts just below it
+    const navHeight = () => document.querySelector('header')?.getBoundingClientRect().height ?? 72;
+
+    const tl = gsap.timeline({
+        defaults: { ease: 'none' }, // progress maps linearly to scroll; softness lives inside each tween
+        scrollTrigger: {
+            trigger: section,
+            start: () => `top ${navHeight()}px`,
+            end: () => `+=${Math.round(window.innerHeight * HIW_SCROLL_VIEWPORTS)}`,
+            pin: true,
+            scrub: HIW_SCRUB,
+            anticipatePin: 1,
+            invalidateOnRefresh: true,
+        },
+    });
+
+    els.forEach((s, i) => {
+        const at = i * HIW_STEP_PERIOD;
+        const lineLen = i < els.length - 1 ? HIW_LINE_LEN : HIW_LAST_LINE_LEN;
+        const lineAt = at + HIW_LINE_DELAY;
+
+        // Phase 1 — visual box fades in; the icon sharpens from washed-out to full contrast
+        tl.to(s.box, { opacity: 1, duration: 1.2, ease: 'power2.out' }, at);
+        tl.to(s.icon, { opacity: 1, filter: HIW_ICON_SHARP, duration: 1.2, ease: 'power2.out' }, at);
+
+        // Phase 2 — title, then description a beat behind it
+        addTextReveal(tl, s.title, at);
+        addTextReveal(tl, s.desc, at + 0.2);
+
+        // Phase 3 — badge pops in as a dot and the line starts drawing from the left
+        tl.to(s.badge, { opacity: 1, duration: 0.15 }, lineAt);
+        tl.to(s.line, { scaleX: 1, duration: lineLen }, lineAt);
+
+        // Phase 4 — badge grows to full size by the time the line is ~65% drawn
+        tl.to(s.badge, { scale: 1, duration: lineLen * 0.65, ease: 'power2.out' }, lineAt);
+        tl.to(s.badgeNum, { opacity: 1, duration: lineLen * 0.65, ease: 'power2.out' }, lineAt);
+        // Phase 5 — the line reaches the next column's badge exactly when the next step starts (at + PERIOD)
+    });
+
+    // Short empty hold at the end (total ≈ 12 units)
+    tl.to({}, { duration: HIW_HOLD }, tl.duration());
+}
+
+// Mobile / tablet: no pin — each step animates on its own when it scrolls into view
+function buildHiwMobileTriggers(els: HiwStepEls[]) {
+    setHiwInitialState(els);
+
+    els.forEach((s) => {
+        const tl = gsap.timeline({
+            defaults: { ease: 'power2.out' },
+            scrollTrigger: {
+                trigger: s.root,
+                start: 'top 80%',
+                toggleActions: 'play none none reverse',
+            },
+        });
+
+        tl.to(s.box, { opacity: 1, duration: 0.6 }, 0)
+            .to(s.icon, { opacity: 1, filter: HIW_ICON_SHARP, duration: 0.6 }, 0)
+            .to(s.badge, { opacity: 1, scale: 1, duration: 0.5 }, 0.2)
+            .to(s.badgeNum, { opacity: 1, duration: 0.4 }, 0.3)
+            .to(s.line, { scaleX: 1, duration: 0.8, ease: 'power2.inOut' }, 0.2)
+            .to(s.title, { opacity: 1, y: 0, duration: 0.6 }, 0.2)
+            .to(s.desc, { opacity: 1, y: 0, duration: 0.6 }, 0.35);
+    });
+}
+
+const refreshHiw = () => {
+    if (!hiwDisposed) ScrollTrigger.refresh();
+};
+
+onMounted(() => {
+    const section = hiwSection.value;
+    if (!section) return;
+    hiwDisposed = false;
+
+    // Everything for this section lives in one context so it can be reverted in one go
+    hiwContext = gsap.context(() => {
+        hiwMedia = gsap.matchMedia();
+        hiwMedia.add(
+            {
+                isDesktop: '(min-width: 1024px)',
+                isMobile: '(max-width: 1023px)',
+                reduceMotion: '(prefers-reduced-motion: reduce)',
+            },
+            (context) => {
+                const { isDesktop, isMobile, reduceMotion } = (context.conditions ?? {}) as Record<string, boolean>;
+
+                // Reduced motion: no pin, no scrub — leave everything in its final, visible state
+                if (reduceMotion) return;
+
+                const els = getHiwSteps(section);
+                if (isDesktop) buildHiwPinnedTimeline(section, els);
+                else if (isMobile) buildHiwMobileTriggers(els);
+            },
+        );
+    }, section);
+
+    // Fonts (Inter / Lora) change text heights → recompute pin distances once they have loaded
+    document.fonts?.ready.then(refreshHiw);
+    if (document.readyState !== 'complete') window.addEventListener('load', refreshHiw, { once: true });
+});
+
+onUnmounted(() => {
+    hiwDisposed = true;
+    window.removeEventListener('load', refreshHiw);
+    // Reverts only this section's tweens/triggers and removes its pin spacer
+    hiwMedia?.revert();
+    hiwContext?.revert();
+    hiwMedia = null;
+    hiwContext = null;
+});
 </script>
 
 <template>
@@ -409,6 +634,190 @@ watch(activeIndex, (index) => {
             </div>
         </section>
 
+        <!-- ═══════════════════════════════════════════════════ -->
+        <!-- HOW IT WORKS SECTION                                -->
+        <!-- ═══════════════════════════════════════════════════ -->
+        <section
+            ref="hiwSection"
+            class="hiw-section relative px-6 md:px-16 lg:px-32 py-24 lg:py-0 flex flex-col justify-center"
+        >
+
+            <!-- Section header (same style as the Features header) -->
+            <div class="max-w-2xl mb-14 lg:mb-12">
+                <h2
+                    class="font-medium tracking-tight mb-5"
+                    style="font-size: clamp(2rem, 4vw, 3rem); line-height: 1.15; letter-spacing: -0.02em; color: #edf7f5;"
+                >
+                    Up and running in
+                    <span class="hero-serif-italic">three steps</span>
+                </h2>
+                <p class="text-base md:text-lg leading-relaxed" style="color: rgba(237, 247, 245, 0.5);">
+                    No downloads, no setup — just three steps between you and your first meeting.
+                </p>
+            </div>
+
+            <!--
+                Steps grid. On lg+ each step is a subgrid spanning 4 rows
+                (visual / timeline / title / description) so every row lines up across columns.
+            -->
+            <div class="hiw-grid grid grid-cols-1 gap-y-16 lg:grid-cols-3 lg:gap-y-0 lg:grid-rows-[repeat(4,auto)]">
+                <div
+                    v-for="(step, index) in steps"
+                    :key="step.id"
+                    data-hiw="step"
+                    class="flex flex-col lg:grid lg:grid-rows-subgrid lg:row-span-4"
+                >
+
+                    <!-- 1 · VISUAL BOX — flat edges, 3:2, two layers -->
+                    <div
+                        data-hiw="box"
+                        class="hiw-will relative overflow-hidden w-full"
+                        style="
+                            aspect-ratio: 3 / 2;
+                            background: linear-gradient(160deg, rgba(12, 44, 33, 0.9), rgba(8, 14, 11, 0.95));
+                            border: 1px solid rgba(255, 255, 255, 0.08);
+                        "
+                    >
+                        <!-- Back layer: oversized faint shape, different per step, cropped by the box -->
+                        <svg
+                            class="absolute inset-0 w-full h-full"
+                            viewBox="0 0 600 400"
+                            preserveAspectRatio="xMidYMid slice"
+                            fill="none"
+                            aria-hidden="true"
+                        >
+                            <!-- Step 1 — concentric rings -->
+                            <g v-if="step.icon === 'user'" stroke="#84aaa2" stroke-opacity="0.18" stroke-width="16">
+                                <circle cx="500" cy="330" r="70" />
+                                <circle cx="500" cy="330" r="130" />
+                                <circle cx="500" cy="330" r="190" />
+                                <circle cx="500" cy="330" r="250" />
+                            </g>
+                            <!-- Step 2 — sweeping curves -->
+                            <g
+                                v-else-if="step.icon === 'link'"
+                                stroke="#84aaa2"
+                                stroke-opacity="0.16"
+                                stroke-width="34"
+                                stroke-linecap="round"
+                            >
+                                <path d="M-60 330 C 120 80, 300 80, 380 230 S 600 420, 700 120" />
+                                <path d="M-60 410 C 120 160, 300 160, 380 310 S 600 500, 700 200" />
+                            </g>
+                            <!-- Step 3 — big solid shapes -->
+                            <g v-else fill="#84aaa2" fill-opacity="0.16">
+                                <circle cx="70" cy="360" r="170" />
+                                <rect x="360" y="-90" width="280" height="280" rx="36" transform="rotate(24 500 50)" />
+                            </g>
+                        </svg>
+
+                        <!-- Front layer: one crisp centered icon -->
+                        <div class="absolute inset-0 flex items-center justify-center">
+                            <!-- Step 1 — user / login -->
+                            <svg
+                                v-if="step.icon === 'user'"
+                                data-hiw="icon"
+                                class="hiw-will w-20 h-20 md:w-24 md:h-24"
+                                viewBox="0 0 96 96"
+                                fill="none"
+                            >
+                                <circle cx="48" cy="34" r="13" stroke="#edf7f5" stroke-width="2.5" />
+                                <path
+                                    d="M22 78 C22 62 33 53 48 53 C63 53 74 62 74 78"
+                                    stroke="#edf7f5"
+                                    stroke-width="2.5"
+                                    stroke-linecap="round"
+                                />
+                            </svg>
+
+                            <!-- Step 2 — plus-video (create / join) -->
+                            <svg
+                                v-else-if="step.icon === 'link'"
+                                data-hiw="icon"
+                                class="hiw-will w-20 h-20 md:w-24 md:h-24"
+                                viewBox="0 0 96 96"
+                                fill="none"
+                            >
+                                <rect x="10" y="28" width="52" height="40" rx="6" stroke="#edf7f5" stroke-width="2.5" />
+                                <path d="M62 42 L84 31 V65 L62 54 Z" stroke="#edf7f5" stroke-width="2.5" stroke-linejoin="round" />
+                                <path d="M36 40 V56 M28 48 H44" stroke="#edf7f5" stroke-width="2.5" stroke-linecap="round" />
+                            </svg>
+
+                            <!-- Step 3 — video-call room -->
+                            <svg
+                                v-else
+                                data-hiw="icon"
+                                class="hiw-will w-20 h-20 md:w-24 md:h-24"
+                                viewBox="0 0 96 96"
+                                fill="none"
+                            >
+                                <rect x="10" y="16" width="76" height="50" rx="4" stroke="#edf7f5" stroke-width="2.5" />
+                                <rect x="17" y="23" width="30" height="36" rx="2" stroke="#edf7f5" stroke-width="2" />
+                                <circle cx="32" cy="36" r="5" stroke="#edf7f5" stroke-width="2" />
+                                <path
+                                    d="M23 54 C23 47 27 44 32 44 C37 44 41 47 41 54"
+                                    stroke="#edf7f5"
+                                    stroke-width="2"
+                                    stroke-linecap="round"
+                                />
+                                <rect x="52" y="23" width="27" height="16" rx="2" stroke="#edf7f5" stroke-width="2" />
+                                <rect x="52" y="43" width="27" height="16" rx="2" stroke="#edf7f5" stroke-width="2" />
+                                <path d="M36 80 H60 M48 66 V80" stroke="#edf7f5" stroke-width="2.5" stroke-linecap="round" />
+                            </svg>
+                        </div>
+                    </div>
+
+                    <!-- 2 · TIMELINE ROW — badge + connector line -->
+                    <div class="relative mt-6 h-8">
+                        <!--
+                            Starts at the badge's centre (left: 1rem) and ends exactly at the next
+                            column's badge (column width + gap). The last line only runs a short tail.
+                        -->
+                        <div
+                            data-hiw="line"
+                            class="hiw-will absolute"
+                            :style="{
+                                left: '1rem',
+                                top: 'calc(50% - 1px)',
+                                height: '2px',
+                                width:
+                                    index < steps.length - 1
+                                        ? 'calc(100% - 1rem + var(--hiw-gap))'
+                                        : 'calc(100% - 1rem + var(--hiw-tail))',
+                                background: '#84aaa2',
+                                transformOrigin: 'left center',
+                            }"
+                        ></div>
+                        <div
+                            data-hiw="badge"
+                            class="hiw-will absolute left-0 top-0 z-10 w-8 h-8 flex items-center justify-center"
+                            style="background: linear-gradient(to right, #0C2C21, #185146); border: 1px solid rgba(132, 170, 162, 0.45);"
+                        >
+                            <span data-hiw="badge-num" class="text-sm font-bold text-white">{{ index + 1 }}</span>
+                        </div>
+                    </div>
+
+                    <!-- 3 · TITLE -->
+                    <h3
+                        data-hiw="title"
+                        class="hiw-will mt-6 font-medium"
+                        style="font-size: clamp(1.25rem, 1.6vw, 1.5rem); line-height: 1.25; letter-spacing: -0.01em; color: #edf7f5;"
+                    >
+                        {{ step.title }}
+                    </h3>
+
+                    <!-- 4 · DESCRIPTION -->
+                    <p
+                        data-hiw="desc"
+                        class="hiw-will mt-3 text-base leading-relaxed"
+                        style="max-width: 22rem; color: rgba(237, 247, 245, 0.55);"
+                    >
+                        {{ step.description }}
+                    </p>
+                </div>
+            </div>
+        </section>
+
     </div>
 </template>
 
@@ -428,5 +837,46 @@ watch(activeIndex, (index) => {
 .panel-fade-enter-from,
 .panel-fade-leave-to {
     opacity: 0;
+}
+
+/* ───────── How It Works ───────── */
+
+/* Desktop: the section fills the viewport below the navbar so the pinned content is vertically centered */
+@media (min-width: 1024px) {
+    .hiw-section {
+        min-height: calc(100vh - 4.5rem);
+    }
+}
+
+/*
+   --hiw-gap  = column gap (the connector line crosses it to reach the next badge)
+   --hiw-tail = how far the last line runs past its column
+   Both are 0 on mobile, where each line simply runs to the right edge of its column.
+*/
+.hiw-grid {
+    --hiw-gap: 0px;
+    --hiw-tail: 0px;
+}
+@media (min-width: 1024px) {
+    .hiw-grid {
+        --hiw-gap: 3rem;
+        --hiw-tail: 3rem;
+        column-gap: var(--hiw-gap);
+    }
+}
+@media (min-width: 1280px) {
+    .hiw-grid {
+        --hiw-gap: 5rem;
+    }
+}
+
+/* Hint the browser about the properties GSAP animates */
+.hiw-will {
+    will-change: transform, opacity;
+}
+@media (prefers-reduced-motion: reduce) {
+    .hiw-will {
+        will-change: auto;
+    }
 }
 </style>
