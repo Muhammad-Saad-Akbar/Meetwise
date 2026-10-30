@@ -323,6 +323,148 @@ onUnmounted(() => {
     hiwMedia = null;
     hiwContext = null;
 });
+
+/* ═══════════════════════════════════════════════════════ */
+/* CTA SECTION — ANIMATION                                 */
+/* ═══════════════════════════════════════════════════════ */
+
+// Pacing — tweak these to retime the loop (all in seconds, measured from the start of each loop)
+const CTA_PERIOD = 4; // total length of one loop (the tail of it is pure rest)
+const CTA_SCALE = 1.11; // how far the whole button grows
+const CTA_SWEEP = 0.9; // the glow crosses the button between t = 0 and t = CTA_SWEEP
+const CTA_HOLD_END = 2.5; // the button stays grown until this moment, then shrinks back
+const CTA_FADE = 0.15; // glow fade-in / fade-out length at either end of the sweep
+const CTA_GROW_START = 0.45; // growth begins when the glow is about halfway across
+const CTA_GROW_END = 0.95;
+const CTA_SHRINK = 0.35; // shrink length (CTA_HOLD_END → CTA_HOLD_END + CTA_SHRINK)
+
+const ctaSection = ref<HTMLElement | null>(null);
+let ctaContext: gsap.Context | null = null;
+let ctaMedia: gsap.MatchMedia | null = null;
+let ctaTimeline: gsap.core.Timeline | null = null;
+let ctaInView = false;
+let ctaDisposed = false;
+
+// Build the ONE looping timeline. Every tween is a fromTo, so nothing depends on where the
+// animation currently is — it is safe to invalidate() it at any moment (e.g. on resize).
+function buildCtaLoop(section: HTMLElement): gsap.core.Timeline | null {
+    // Query the DOM nodes directly — a template ref on <Link> would return the component instance
+    const button = section.querySelector<HTMLElement>('[data-cta="button"]');
+    const glow = section.querySelector<HTMLElement>('[data-cta="glow"]');
+    if (!button || !glow) return null;
+
+    // Rest state: normal-looking static button, glow invisible and vertically centred
+    gsap.set(button, { scale: 1 });
+    gsap.set(glow, { x: 0, yPercent: -50, opacity: 0 });
+
+    const tl = gsap.timeline({ repeat: -1, paused: true });
+
+    // Phase 1 — GLOW SWEEP: left edge → right edge. Function-based, so it is right at any width.
+    tl.fromTo(
+        glow,
+        { x: 0 },
+        { x: () => button.offsetWidth - glow.offsetWidth, duration: CTA_SWEEP, ease: 'power1.inOut' },
+        0,
+    );
+    // …fading in over the first 0.15s and out over the last 0.15s of the sweep
+    tl.fromTo(glow, { opacity: 0 }, { opacity: 1, duration: CTA_FADE, ease: 'none' }, 0);
+    tl.fromTo(
+        glow,
+        { opacity: 1 },
+        { opacity: 0, duration: CTA_FADE, ease: 'none', immediateRender: false },
+        CTA_SWEEP - CTA_FADE,
+    );
+
+    // Phase 2 — GROW: the whole button (label included) scales up as the glow passes the middle
+    tl.fromTo(
+        button,
+        { scale: 1 },
+        { scale: CTA_SCALE, duration: CTA_GROW_END - CTA_GROW_START, ease: 'power2.out', immediateRender: false },
+        CTA_GROW_START,
+    );
+
+    // Phase 3 — HOLD: nothing is scheduled between CTA_GROW_END and CTA_HOLD_END, the scale simply stays
+
+    // Phase 4 — SHRINK: back to normal size
+    tl.fromTo(
+        button,
+        { scale: CTA_SCALE },
+        { scale: 1, duration: CTA_SHRINK, ease: 'power2.inOut', immediateRender: false },
+        CTA_HOLD_END,
+    );
+
+    // Phase 5 — REST: pad the timeline with an empty tween so one loop lasts exactly CTA_PERIOD
+    const remaining = CTA_PERIOD - tl.duration();
+    if (remaining > 0) tl.to({}, { duration: remaining }, tl.duration());
+
+    return tl;
+}
+
+// Play only while the section is on screen AND the tab is visible (one timeline, so nothing stacks)
+function syncCtaPlayback() {
+    if (!ctaTimeline) return;
+    if (ctaInView && !document.hidden) ctaTimeline.play();
+    else ctaTimeline.pause();
+}
+
+// Re-measure the sweep distance whenever ScrollTrigger refreshes (it also does this on window resize)
+function onCtaRefresh() {
+    ctaTimeline?.invalidate();
+}
+
+onMounted(() => {
+    const section = ctaSection.value;
+    if (!section) return;
+    ctaDisposed = false;
+
+    ctaContext = gsap.context(() => {
+        ctaMedia = gsap.matchMedia();
+
+        // Reduced motion → nothing is built, so the static button stays exactly as it is
+        ctaMedia.add('(prefers-reduced-motion: no-preference)', () => {
+            ctaTimeline = buildCtaLoop(section);
+            if (!ctaTimeline) return;
+
+            // Pause the loop while the section is off-screen, resume when it comes back
+            const visibility = ScrollTrigger.create({
+                trigger: section,
+                start: 'top bottom',
+                end: 'bottom top',
+                onToggle: (self) => {
+                    ctaInView = self.isActive;
+                    syncCtaPlayback();
+                },
+            });
+            ctaInView = visibility.isActive;
+            syncCtaPlayback();
+
+            return () => {
+                ctaTimeline = null;
+                ctaInView = false;
+            };
+        });
+    }, section);
+
+    document.addEventListener('visibilitychange', syncCtaPlayback);
+    ScrollTrigger.addEventListener('refresh', onCtaRefresh);
+
+    // Fonts change text widths/heights → refresh once so every trigger position (and the sweep) is exact
+    document.fonts?.ready.then(() => {
+        if (!ctaDisposed) ScrollTrigger.refresh();
+    });
+});
+
+onUnmounted(() => {
+    ctaDisposed = true;
+    document.removeEventListener('visibilitychange', syncCtaPlayback);
+    ScrollTrigger.removeEventListener('refresh', onCtaRefresh);
+    // Reverts only this section's timeline + trigger
+    ctaMedia?.revert();
+    ctaContext?.revert();
+    ctaMedia = null;
+    ctaContext = null;
+    ctaTimeline = null;
+});
 </script>
 
 <template>
@@ -818,6 +960,52 @@ onUnmounted(() => {
             </div>
         </section>
 
+        <!-- ═══════════════════════════════════════════════════ -->
+        <!-- CTA SECTION                                         -->
+        <!-- ═══════════════════════════════════════════════════ -->
+        <section ref="ctaSection" class="cta-section relative px-6 md:px-16 lg:px-32 py-28 lg:py-36 text-center">
+
+            <!-- Soft static backdrop (not animated) -->
+            <div
+                class="absolute inset-0 pointer-events-none"
+                style="background: radial-gradient(ellipse at center, rgba(24, 81, 70, 0.25) 0%, rgba(24, 81, 70, 0) 65%);"
+                aria-hidden="true"
+            ></div>
+
+            <div class="relative max-w-3xl mx-auto">
+                <h2
+                    class="font-medium tracking-tight mb-5"
+                    style="font-size: clamp(2rem, 4vw, 3rem); line-height: 1.15; letter-spacing: -0.02em; color: #edf7f5;"
+                >
+                    Start your next meeting in
+                    <span class="hero-serif-italic">one click</span>
+                </h2>
+
+                <p
+                    class="text-base md:text-lg leading-relaxed max-w-xl mx-auto mb-10"
+                    style="color: rgba(237, 247, 245, 0.5);"
+                >
+                    Create a free account, share a link, and your team is in the room in seconds. No downloads, no setup.
+                </p>
+
+                <!-- Animated CTA button — same Inertia link + logic as the Hero button -->
+                <Link
+                    :href="$page.props.auth.user ? dashboard() : register()"
+                    data-cta="button"
+                    class="cta-btn relative inline-flex items-center justify-center overflow-hidden px-12 py-5 text-base font-semibold text-white"
+                    style="
+                        background: linear-gradient(to right, #0C2C21, #185146);
+                        border-radius: 1.1rem;
+                        box-shadow: 0 0 48px rgba(24, 81, 70, 0.5), 0 0 12px rgba(24, 81, 70, 0.3);
+                    "
+                >
+                    <span data-cta="glow" class="cta-glow" aria-hidden="true"></span>
+                    <span class="relative z-10">{{ $page.props.auth.user ? 'Go to Dashboard' : 'Get Started Free' }}</span>
+                </Link>
+
+            </div>
+        </section>
+
     </div>
 </template>
 
@@ -876,6 +1064,49 @@ onUnmounted(() => {
 }
 @media (prefers-reduced-motion: reduce) {
     .hiw-will {
+        will-change: auto;
+    }
+}
+
+/* ───────── CTA ───────── */
+
+/*
+   The button is a rounded rectangle about 5.6× wider than it is tall. min-width gives it that
+   width on desktop and shrinks to the container on small screens (so it never overflows at 320px).
+*/
+.cta-btn {
+    will-change: transform;
+    transform-origin: 50% 50%;
+    min-width: min(100%, 22.4rem);
+}
+.cta-btn:focus-visible {
+    outline: 2px solid #84aaa2;
+    outline-offset: 4px;
+}
+
+/* The light blob that sweeps across the button (positioned and animated by GSAP; hidden at rest) */
+.cta-glow {
+    position: absolute;
+    top: 50%;
+    left: 0;
+    height: 90%;
+    aspect-ratio: 1;
+    border-radius: 9999px;
+    pointer-events: none;
+    background: radial-gradient(
+        circle,
+        rgba(237, 247, 245, 0.55) 0%,
+        rgba(237, 247, 245, 0.22) 40%,
+        rgba(237, 247, 245, 0) 70%
+    );
+    filter: blur(4px);
+    opacity: 0;
+    will-change: transform, opacity;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .cta-btn,
+    .cta-glow {
         will-change: auto;
     }
 }
